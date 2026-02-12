@@ -2,7 +2,7 @@
 # Subscribe YouTube ƈɦǟռռɛʟ For Amazing Bot @Tech_VJ
 # Ask Doubt on telegram @KingVJ01
 
-from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import Message
 from pyrogram import filters, Client, errors
 from pyrogram.errors.exceptions.flood_420 import FloodWait
 from database import add_user, add_group, all_users, all_groups, users
@@ -23,27 +23,57 @@ def parse_post_link(link: str):
     msg_id = int(parts[-1])
     return chat, msg_id
 
-#━━━━━━━━━━━━━━━━━━━━ JOIN REQUEST (NO APPROVE, ONLY DM) ━━━━━━━━━━━━━━━━━━━━
+#━━━━━━━━━━━━━━━━━━━━ JOIN REQUEST (AUTO-APPROVE + DM) ━━━━━━━━━━━━━━━━━━━━
+# Note: Pyrogram's on_chat_join_request passes a ChatJoinRequest-like object.
 @app.on_chat_join_request(filters.group | filters.channel)
-async def approve(_, m: Message):
-    op = m.chat
-    user = m.from_user
+async def approve(_, join_request):
+    # join_request has attributes: chat, from_user (or .user), etc.
     try:
+        op = getattr(join_request, "chat", None) or join_request.chat
+        user = getattr(join_request, "from_user", None) or getattr(join_request, "user", None)
+
+        if not op or not user:
+            return
+
         add_group(op.id)
         add_user(user.id)
 
-        # ❌ JOIN REQUEST APPROVE NAHI HOGA
-        # await app.approve_chat_join_request(op.id, user.id)
+        # ----- AUTO-APPROVE -----
+        try:
+            await app.approve_chat_join_request(op.id, user.id)
+            # optional: notify the user they are approved
+            await app.send_message(
+                user.id,
+                f"✅ Hi {user.first_name}, aapka join request approve kar diya gaya hai. Welcome!\n\n🔰 Join karne ke liye shukriya."
+            )
+        except FloodWait as e:
+            # server asks to wait: sleep and retry
+            await asyncio.sleep(e.x if hasattr(e, "x") else e.value)
+            try:
+                await app.approve_chat_join_request(op.id, user.id)
+            except Exception:
+                pass
+        except errors.RPCError as e:
+            # common failures (bot not admin / missing rights / PeerIdInvalid etc.)
+            # fallback: try DM informing user
+            try:
+                await app.send_message(
+                    user.id,
+                    "⚠️ Sorry, mera bot group mein required admin permission nahi mila isliye aapko auto-approve nahi kar paya. Group admin se contact karein."
+                )
+            except:
+                pass
+        except Exception:
+            # generic ignore to keep bot alive
+            try:
+                await app.send_message(
+                    user.id,
+                    "⚠️ Koi error aaya. Admin permissions check karo."
+                )
+            except:
+                pass
 
-        # ✅ USER KO DM
-        await app.send_message(
-            user.id,
-            f"👋 Hello • {user.first_name}\n\n"
-            "❌ Aapka join request approve nahi hua.\n"
-            "📩 Lekin important info DM me bhej di gayi hai 👇"
-        )
-
-        # ✅ PROMO / APK / VIDEO SEND
+        # ----- SEND PROMO / POSTS AFTER APPROVE -----
         for link in cfg.POSTS:
             try:
                 chat_id, msg_id = parse_post_link(link)
@@ -57,10 +87,11 @@ async def approve(_, m: Message):
                 pass
 
     except errors.PeerIdInvalid:
+        # user has privacy settings or cannot be PMed
         pass
     except FloodWait as e:
-        await asyncio.sleep(e.value)
-    except:
+        await asyncio.sleep(e.x if hasattr(e, "x") else e.value)
+    except Exception:
         pass
 
 #━━━━━━━━━━━━━━━━━━━━ START COMMAND ━━━━━━━━━━━━━━━━━━━━
